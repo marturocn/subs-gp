@@ -1,0 +1,153 @@
+[tool.poetry]
+name = "CLIP_ENVIRONMENT"
+version = "0.1.0"
+description = "Framework-agnostic backend example using FastAPI"
+readme = "clean-architecture.md"
+license = "MIT"
+authors = [
+    "GrupoSti <diegogarcia@solemti.com>"
+]
+packages = [{ include = "*", from = "src" }, { include = "scripts" }]
+
+[tool.poetry.dependencies]
+python = ">3.11,<3.13"
+alembic = "1.17.0"
+alembic-postgresql-enum = "1.8.0"
+bcrypt = "5.0.0"
+dishka = "1.7.2"
+fastapi = "0.119.0"
+orjson = "3.11.3"
+psycopg = { extras = ["binary"], version = "3.2.10" }
+pydantic = { extras = ["email"], version = "2.12.3" }
+pyjwt = { extras = ["crypto"], version = "2.10.1" }
+rtoml = "0.12.0"
+sqlalchemy = { extras = ["mypy"], version = "2.0.44" }
+uuid6 = "2025.0.1"
+uvicorn = "0.38.0"
+uvloop = "0.22.1"
+rx = ">=3.2.0,<4.0.0"
+gunicorn = ">=23.0.0,<24.0.0"
+pymysql = ">=1.1.1,<2.0.0"
+python-dotenv = ">=1.1.1,<2.0.0"
+reactivex = ">=4.0.4,<5.0.0"
+transformers = "4.57.3"
+opencv-python = ">=4.12.0.88,<5.0.0"
+torch = "2.9.0"
+torchvision = "0.24.0"
+pillow = "12.0.0"
+python-multipart = ">=0.0.20,<1.0.0"
+numpy = ">=1.24.0,<2.3.4"
+httpx = "0.28.0"
+pillow-heif = "^1.1.1"
+scipy = "^1.16.2"
+scikit-learn = "^1.7.1"
+polars = "^1.34.0"
+faiss-cpu = "^1.8.0"
+boto3 = "1.42.31"
+aws-secretsmanager-caching = "1.1.3"
+pysonar_scanner = "^0.3.0.2016"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "1.17.1"
+pre-commit = "4.2.0"
+ruff = "0.12.8"
+slotscheck = "0.19.1"
+pysonar-scanner = "^0.3.0.2016"
+
+
+[tool.poetry.group.test.dependencies]
+coverage = "7.10.2"
+line-profiler = "5.0.0"
+pytest = "8.4.1"
+pytest-asyncio = "1.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.mypy]
+files = ["config", "scripts", "src", "tests"]
+exclude = "^.*alembic.*$"
+strict = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+plugins = [
+    "pydantic.mypy",
+    "sqlalchemy.ext.mypy.plugin",
+]
+
+[tool.poetry.scripts]
+prod = "scripts.prod:main"
+dev = "scripts.dev:main"
+sonar = "scripts.sonar:main"
+
+[tool.ruff]
+line-length = 88
+preview = true
+
+[tool.lint] # Or just [lint] if in a dedicated Ruff config file
+select = [
+  "A", "ARG", "ASYNC", "B", "C4", "C90", "DTZ", "E", "ERA001", "F", "FLY", "I", "LOG",
+  "N", "PERF", "PL", "PT", "PTH", "Q", "RET", "RSE", "RUF", "S", "SIM", "SLF", "SLOT",
+  "T20", "TCH", "TID", "UP", "W"
+]
+ignore = [
+  "N818", "PLR0913", "PLR0917", "PLR6301", "PTH123",
+  "TC001", "TC002", "TC003", "TC006", "UP015"
+]
+
+[tool.ruff.per-file-ignores] # Or just [lint.per-file-ignores]
+"src/app/infrastructure/persistence_sqla/alembic/**" = ["ALL"]
+"tests/**" = [
+  "ARG002", "PLC2801", "PLR2004", "PT011", "S101", "S106", "S107"
+]
+"src/app/domain/value_objects/base.py" = ["B024"]
+"src/app/infrastructure/adapters/password_hasher_bcrypt.py" = ["E501"]
+"src/app/infrastructure/auth/session/constants.py" = ["S105"]
+"src/app/presentation/http/auth/constants.py" = ["S105"]
+"src/app/presentation/http/exceptions/handlers.py" = ["RUF029"]
+"scripts/dishka/plot_dependencies_data.py" = ["T201"]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = false
+
+[tool.ruff.isort]
+combine-as-imports = true
+force-wrap-aliases = true
+split-on-trailing-comma = true
+
+[tool.slotscheck]
+strict-imports = true
+exclude-modules = '''
+^app\.infrastructure\.persistence_sqla\.alembic
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow"]
+addopts = "-m 'not slow'"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "**/__init__.py",
+    "**/alembic/**"
+]
+concurrency = ["multiprocessing", "thread"]
+parallel = true
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    '@(abc\.)?abstractmethod',
+    "pass",
+    '\.\.\.',
+    "from .*",
+    "import .*",
+    'logging\..*',
+    'log\..*'
+]

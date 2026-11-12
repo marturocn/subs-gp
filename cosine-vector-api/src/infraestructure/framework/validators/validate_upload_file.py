@@ -1,0 +1,197 @@
+from fastapi import Depends, UploadFile, File, HTTPException
+from pydantic import BaseModel, ValidationError
+from typing import Type, Any, Optional, Set
+import io
+from PIL import Image
+# Adding support for HEIF/HEIC images
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    # If pillow-heif is not installed, continue without HEIF support
+    pass
+
+from src.common.exceptions.http.generic_validation_exception import GenericValidationException
+
+# Constantes
+INVALID_FILE_MESSAGE = "Invalid file"
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg", 
+    "image/png",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/heif",
+    "image/heic"
+}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".heif", ".heic"}
+
+
+class ValidateUploadFile:
+    """
+    Validador para archivos subidos, especialmente imágenes.
+    
+    Realiza validaciones de:
+    - Tipo de contenido
+    - Tamaño del archivo
+    - Formato de imagen válido
+    - Extensión del archivo
+    """
+    
+    def __init__(
+        self, 
+        dto_class: Type[BaseModel],
+        description: Optional[str] = None,
+        max_size: Optional[int] = None,
+        allowed_types: Optional[Set[str]] = None,
+        validate_image: bool = True
+    ):
+        self.dto_class = dto_class
+        self.description = description or "Archivo a validar"
+        self.max_size = max_size or MAX_FILE_SIZE
+        self.allowed_types = allowed_types or ALLOWED_CONTENT_TYPES
+        self.validate_image = validate_image
+
+    def __call__(self) -> Any:
+        async def dependency(file: Optional[UploadFile] = File(None, description=self.description)):
+            try:
+                return await self._perform_validation(file)
+            except GenericValidationException:
+                raise
+            except Exception as exc:
+                raise GenericValidationException(
+                    message="File validation error",
+                    detail={
+                        "field": "file",
+                        "reason": f"Unexpected error during file validation: {str(exc)}"
+                    }
+                )
+
+        return Depends(dependency)
+    
+    async def _perform_validation(self, file: Optional[UploadFile]) -> Any:
+        """
+        Realiza todas las validaciones del archivo.
+        Este método es compartido por __call__ y validate_direct.
+        """
+        # Validar que el archivo no esté vacío
+        if not file or not file.filename:
+            raise GenericValidationException(
+                message="No file provided",
+                detail={"field": "file", "reason": "File is required"}
+            )
+
+        # Validar tipo de contenido
+        if file.content_type not in self.allowed_types:
+            raise GenericValidationException(
+                message="Invalid file type",
+                detail={
+                    "field": "file", 
+                    "reason": f"File type {file.content_type} not allowed. Allowed types: {', '.join(self.allowed_types)}"
+                }
+            )
+
+        # Validar extensión del archivo
+        if file.filename:
+            file_extension = file.filename.lower().split('.')[-1]
+            if f".{file_extension}" not in ALLOWED_EXTENSIONS:
+                raise GenericValidationException(
+                    message="Invalid file extension",
+                    detail={
+                        "field": "file",
+                        "reason": f"Extension .{file_extension} not allowed. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}"
+                    }
+                )
+
+        # Leer el contenido del archivo para validaciones adicionales
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        # Validar tamaño del archivo
+        if file_size > self.max_size:
+            raise GenericValidationException(
+                message="File too large",
+                detail={
+                    "field": "file",
+                    "reason": f"File size {file_size} bytes exceeds maximum allowed size of {self.max_size} bytes"
+                }
+            )
+
+        # Validar que el archivo no esté vacío
+        if file_size == 0:
+            raise GenericValidationException(
+                message="Empty file",
+                detail={"field": "file", "reason": "File cannot be empty"}
+            )
+
+        # Validar formato de imagen si está habilitado
+        if self.validate_image:
+            self._validate_image_format(file_content)
+
+        # Restablecer el archivo para que pueda ser leído después
+        await file.seek(0)
+
+        # Crear el DTO usando model_validate
+        return self.dto_class.model_validate({"file": file})
+    
+    async def validate_direct(self, file: Optional[UploadFile]) -> Any:
+        """
+        Método para validación directa sin Depends (útil para testing).
+        """
+        try:
+            return await self._perform_validation(file)
+        except GenericValidationException:
+            raise
+        except Exception as exc:
+            raise GenericValidationException(
+                message="File validation error",
+                detail={
+                    "field": "file",
+                    "reason": f"Unexpected error during file validation: {str(exc)}"
+                }
+            )
+
+    def _validate_image_format(self, file_content: bytes) -> None:
+        """
+        Valida que el contenido del archivo sea una imagen válida.
+        
+        Args:
+            file_content: Contenido del archivo en bytes
+            
+        Raises:
+            GenericValidationException: Si la imagen no es válida
+        """
+        try:
+            # Intentar abrir la imagen con PIL
+            image = Image.open(io.BytesIO(file_content))
+            
+            # Verificar que la imagen sea válida
+            image.verify()
+            
+            # Validar dimensiones mínimas (opcional)
+            image = Image.open(io.BytesIO(file_content))  # Reabrir después de verify()
+            width, height = image.size
+            
+            if width < 10 or height < 10:
+                raise GenericValidationException(
+                    message="Image too small",
+                    detail={
+                        "field": "file",
+                        "reason": f"Image dimensions {width}x{height} are too small. Minimum size is 10x10 pixels"
+                    }
+                )
+                
+        except GenericValidationException:
+            # Re-lanzar excepciones de validación personalizadas
+            raise
+        except Exception as exc:
+            # La imagen no es válida o no se puede abrir
+            raise GenericValidationException(
+                message="Invalid image format",
+                detail={
+                    "field": "file",
+                    "reason": f"File is not a valid image or is corrupted: {str(exc)}"
+                }
+            )

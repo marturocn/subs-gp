@@ -1,0 +1,25 @@
+[Unit]
+Description=Clip Vector API (Subs-GP Image Inference Service on Port 8200)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+SELinuxContext=system_u:system_r:unconfined_service_t:s0
+WorkingDirectory=/opt/subs-gp/clip-vector-api
+EnvironmentFile=-/opt/subs-gp/clip-vector-api/.env
+Environment="PATH=/opt/subs-gp/CLIP_ENVIRONMENT/bin:/usr/local/cuda/bin:/usr/bin:/bin"
+Environment="VIRTUAL_ENV=/opt/subs-gp/CLIP_ENVIRONMENT"
+Environment="PYTHONPATH=/opt/subs-gp/clip-vector-api/src:/opt/subs-gp/clip-vector-api"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
+Environment="CUDA_HOME=/usr/local/cuda"
+ExecStart=/opt/subs-gp/CLIP_ENVIRONMENT/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8200 --workers 1
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

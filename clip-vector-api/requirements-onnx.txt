@@ -1,0 +1,14 @@
+# ONNX Runtime Dependencies
+# Install these dependencies to enable ONNX optimization
+
+# Base ONNX support (required)
+onnx>=1.15.0
+onnxruntime>=1.16.0
+
+# GPU acceleration (choose one based on your hardware)
+# onnxruntime-gpu>=1.16.0  # For NVIDIA GPUs with CUDA
+
+# Optional optimizations
+# tensorrt>=8.6.0  # For maximum performance on NVIDIA GPUs (requires separate installation)
+# openvino>=2023.0.0  # For Intel CPU optimization
+# openvino-dev>=2023.0.0  # OpenVINO development tools

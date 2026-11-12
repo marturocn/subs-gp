@@ -1,0 +1,3 @@
+"""
+Search Vector DTOs Module
+"""

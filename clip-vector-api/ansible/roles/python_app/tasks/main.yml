@@ -1,0 +1,48 @@
+---
+- name: Wake up the server via Lambda URL
+  uri:
+    url: "{{ api_wakeup_server_uri }}"
+    method: GET
+    status_code: 200
+  delegate_to: localhost
+  run_once: true
+
+- name: Wait for server to boot
+  pause:
+    seconds: "{{ api_wait_server_time }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Copy application files
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../"
+    dest: "{{ api_dir }}/"
+    recursive: yes
+    delete: false
+    archive: yes
+    compress: yes
+    rsync_opts:
+      - "--exclude=__pycache__"
+      - "--exclude=.git"
+      - "--exclude=.vscode"
+      - "--exclude=*.pyc"
+      - "--exclude=ansible"
+      - "--exclude=docker-compose.yml"
+      - "--exclude=docker"
+      - "--exclude=tests"
+      - "--include=.*"
+
+- name: Generate environment file
+  template:
+    src: ".env.j2"
+    dest: "{{ api_dir }}/.env"
+    owner: ec2-user
+    group: ec2-user
+    mode: "0644"
+
+- name: Restart service
+  become: yes
+  systemd:
+    name: "{{ api_service_name }}"
+    state: restarted
+    enabled: yes

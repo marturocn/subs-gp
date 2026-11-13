@@ -10,8 +10,8 @@ class SearchQueryParamsDto(BaseModel):
     DTO for validating search query parameters.
     """
     threshold: Optional[float] = Field(
-        0.5,
-        description="Valor mínimo de similitud para incluir un resultado (rango: 0.0 a 1.0). Por defecto 0.5.",
+        0.35,
+        description="Valor mínimo de similitud para incluir un resultado (rango: 0.0 a 1.0). Por defecto 0.35.",
         ge=0.0,
         le=1.0
     )

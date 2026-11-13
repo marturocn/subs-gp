@@ -104,13 +104,12 @@ def _get_suspicious_mask(
         return magnitude_filter_mask
     
     if total_regions <= 2:
-        # Imágenes simples: filtro más agresivo
-        return ((best_distances > 0.3) & (best_cosine_sims < 0.95)) | magnitude_filter_mask
+        # Imágenes simples: filtro calibrado para permitir variaciones de perspectiva e iluminación
+        return ((best_distances > 1.15) & (best_cosine_sims < 0.35)) | magnitude_filter_mask
     else:
-        # Imágenes complejas: filtro relajado
+        # Imágenes complejas: filtro calibrado
         return (
-            ((best_distances > 0.6) & (best_cosine_sims < 0.8)) |
-            ((best_distances > 0.4) & (best_cosine_sims < 0.85)) |
+            ((best_distances > 1.25) & (best_cosine_sims < 0.30)) |
             magnitude_filter_mask
         )
 
@@ -247,7 +246,7 @@ def calculate_vector_euclidean_distances(
     
     # Determinar máscara de validez
     if apply_strict_filter:
-        suspicious_mask = (euclidean_dists > 0.9) & (np.array(cosine_sims) < 0.75)
+        suspicious_mask = (euclidean_dists > 1.15) & (np.array(cosine_sims) < 0.35)
         if np.any(suspicious_mask):
             logger.warning(f"   🚫 Filtro estricto: Rechazando {np.sum(suspicious_mask)} candidatos")
         valid_mask = ~suspicious_mask
@@ -842,7 +841,7 @@ def _calculate_euclidean_map(
     """Calculate euclidean distances and return result map and whether all were rejected."""
     euclidean_results_map = {}
     
-    if len(best_matches) <= 1 or not regions:
+    if not best_matches or not regions:
         return euclidean_results_map, False
     
     try:
@@ -883,6 +882,19 @@ def _convert_to_final_results(
     faiss_to_catalog_map: Dict[str, str]
 ) -> List[Tuple]:
     """Convert matches to final result tuples."""
+    if not euclidean_results_map:
+        return [(
+            faiss_to_catalog_map.get(m.piece_id, m.piece_id),
+            m.similarity,
+            m.real_piece_id,
+            m.match_count,
+            m.same_piece_count,
+            {
+                'euclidean_distance': 0.0,
+                'combined_score': m.similarity
+            }
+        ) for m in best_matches]
+
     filtered_matches = [m for m in best_matches if m.piece_id in euclidean_results_map]
     return [(
         faiss_to_catalog_map.get(m.piece_id, m.piece_id),

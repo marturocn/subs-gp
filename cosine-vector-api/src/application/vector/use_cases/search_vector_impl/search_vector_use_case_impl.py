@@ -93,7 +93,7 @@ class SearchVectorUseCaseImpl(SearchVectorUseCase):
                         self._faiss_index_repository,
                         self._piece_vector_repository,
                         calculated_k,
-                        command.threshold or 0.5,
+                        command.threshold or 0.35,
                         command.max_results
                     ),  # Step 2: Simple cosine similarity search with FAISS + piece_vector filter
                     format_results_operator(),                              # Step 3: Format results

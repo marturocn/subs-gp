@@ -14,7 +14,7 @@ class SearchVectorCommand:
     """
     image_data: BytesIO
     k: Optional[int] = 5
-    threshold: Optional[float] = 0.5
+    threshold: Optional[float] = 0.35
     max_results: Optional[int] = None
     enable_object_detector: Optional[bool] = True
 

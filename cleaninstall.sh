@@ -12,7 +12,14 @@ log_success() { echo -e "${GREEN}✅ $1${NC}"; }
 log_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error()   { echo -e "${RED}❌ $1${NC}"; }
 
-SERVICE_USER="${SERVICE_USER:-root}"
+# Auto-detect usuario no-root desde SUDO_USER (igual que services.sh); puede sobrescribirse con SERVICE_USER=usuario
+if [ -z "$SERVICE_USER" ]; then
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        SERVICE_USER="$SUDO_USER"
+    else
+        SERVICE_USER="root"
+    fi
+fi
 
 if [ "$SERVICE_USER" = "root" ]; then
     USER_HOME="/root"
@@ -36,7 +43,7 @@ for arg in "$@"; do
             echo "Despues puede reinstalar con: sudo ./services.sh install"
             echo ""
             echo "Variables de entorno:"
-            echo "  SERVICE_USER   Usuario de servicio (default: root)"
+            echo "  SERVICE_USER   Usuario de servicio (default: \$SUDO_USER, o root)"
             exit 0
             ;;
         *)
@@ -121,7 +128,8 @@ main() {
     for STATE_FILE in \
         "/opt/subs-gp/.prod_install_complete" \
         "/opt/subs-gp/nvidia_install_state" \
-        "/opt/subs-gp/nvidia_reboot_count"; do
+        "/opt/subs-gp/nvidia_reboot_count" \
+        "/opt/subs-gp/nvidia_fallback_tried"; do
         if [ -f "$STATE_FILE" ]; then
             rm -f "$STATE_FILE"
             log_success "Eliminado: $STATE_FILE"
@@ -209,7 +217,7 @@ main() {
     echo -e "  ${YELLOW}⚠️  Drivers NVIDIA${NC}"
     echo -e "  ${YELLOW}⚠️  CUDA Toolkit${NC}"
     echo -e "  ${YELLOW}⚠️  Paquetes del sistema${NC}"
-    echo -e "  ${YELLOW}⚠️  Otros datos en /opt/ fuera de /opt/artg/${NC}"
+    echo -e "  ${YELLOW}⚠️  Otros datos en /opt/ fuera de /opt/subs-gp/${NC}"
 
     echo ""
     echo -e "${BLUE}========================================${NC}"

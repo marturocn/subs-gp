@@ -61,6 +61,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ============================================================================
+# RESET: limpiar marcas de corridas fallidas previas
+# ============================================================================
+if [ -f "/opt/subs-gp/nvidia_fallback_tried" ]; then
+    sudo rm -f "/opt/subs-gp/nvidia_fallback_tried"
+fi
+if [ -f "/opt/subs-gp/nvidia_reboot_count" ]; then
+    STORED_KERNEL=$(cat /opt/subs-gp/nvidia_reboot_count 2>/dev/null | cut -d: -f2)
+    if [ "$STORED_KERNEL" != "$(uname -r)" ]; then
+        sudo rm -f "/opt/subs-gp/nvidia_reboot_count" "/opt/subs-gp/nvidia_install_state"
+    fi
+fi
 PYTHON_VERSION=$(cat .python-version | tr -d '[:space:]')
 
 # =============================================================================
@@ -136,6 +148,7 @@ pkg_check_installed() {
 # Archivo de estado para tracking de instalación
 NVIDIA_INSTALL_STATE_FILE="/opt/subs-gp/nvidia_install_state"
 NVIDIA_REBOOT_COUNT_FILE="/opt/subs-gp/nvidia_reboot_count"
+NVIDIA_FALLBACK_TRIED_FILE="/opt/subs-gp/nvidia_fallback_tried"
 MAX_AUTO_REBOOTS=2  # Máximo 2 reboots automáticos antes de error fatal
 
 # =============================================================================
@@ -529,9 +542,110 @@ REPO
     echo "✅ Repositorio NVIDIA configurado"
 }
 
+# =============================================================================
+# FALLBACK: Instalar driver NVIDIA desde fuentes alternativas
+# Usado cuando dnf install nvidia-driver deja solo el metapaquete sin nvidia-smi
+# (típico en RHEL sin subscripción Red Hat). NO entra en loop de reboots.
+# =============================================================================
+
+try_fallback_rpm_fusion() {
+    echo "   [FALLBACK 1] Habilitando RPM Fusion + akmod-nvidia..."
+
+    local rhel_ver
+    rhel_ver=$(rpm -E '%{rhel}')
+    if [ -z "$rhel_ver" ]; then
+        rhel_ver="9"
+    fi
+
+    sudo dnf install -y \
+        "https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rhel_ver}.noarch.rpm" \
+        "https://download1.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-${rhel_ver}.noarch.rpm" \
+        2>&1 | tee -a "$INSTALL_LOG"
+
+    sudo dnf install -y akmod-nvidia 2>&1 | tee -a "$INSTALL_LOG"
+    local rc=$?
+
+    if [ $rc -eq 0 ] && command -v nvidia-smi &> /dev/null; then
+        echo "   [FALLBACK 1] akmod-nvidia instaló nvidia-smi"
+        return 0
+    fi
+
+    echo "   [FALLBACK 1] RPM Fusion + akmod-nvidia no dio nvidia-smi"
+    return 1
+}
+
+try_fallback_nvidia_run() {
+    echo "   [FALLBACK 2] Descargando driver oficial .run de NVIDIA.com (Tesla T4)..."
+
+    local nvidia_ver="615.71.09"
+
+    sudo dnf install -y kernel-devel-$(uname -r) kernel-headers gcc make \
+        elfutils-libelf-devel 2>&1 | tee -a "$INSTALL_LOG" || true
+
+    local run_file="/tmp/NVIDIA-Linux-x86_64-${nvidia_ver}.run"
+
+    if [ ! -f "$run_file" ]; then
+        echo "   [FALLBACK 2] Descargando $run_file..."
+        if ! sudo curl -fsSL -o "$run_file" \
+            "https://us.download.nvidia.com/tesla/${nvidia_ver}/NVIDIA-Linux-x86_64-${nvidia_ver}.run"; then
+            echo "   [FALLBACK 2] No se pudo descargar el driver .run"
+            return 1
+        fi
+        sudo chmod +x "$run_file"
+    fi
+
+    echo "   [FALLBACK 2] Ejecutando instalador .run..."
+    if sudo "$run_file" \
+        --dkms \
+        --silent \
+        --accept-license \
+        --no-install-compat32-libs \
+        2>&1 | tee -a "$INSTALL_LOG"; then
+        if command -v nvidia-smi &> /dev/null; then
+            echo "   [FALLBACK 2] Driver .run instaló nvidia-smi"
+            return 0
+        fi
+    fi
+
+    echo "   [FALLBACK  2] Driver .run no produjo nvidia-smi"
+    return 1
+}
+
+try_fallback_nvidia_install() {
+    # Marca para evitar loops SOLO si TODOS los metodos fallan
+    # (esto permite reintentos en nuevas corridas)
+    if [ -f "$NVIDIA_FALLBACK_TRIED_FILE" ]; then
+        echo "   [FALLBACK] Todos los metodos fallaron en corrida previa. Saltando..."
+        echo "   [FALLBACK] (Borrar $NVIDIA_FALLBACK_TRIED_FILE para reintentar)"
+        return 1
+    fi
+
+    echo "==============================================================="
+    echo "   [FALLBACK] nvidia-smi ausente tras instalacion estandar."
+    echo "   [FALLBACK] Intentando metodos alternativos (RHEL sin suscripcion)..."
+    echo "==============================================================="
+
+    set +e
+
+    if try_fallback_rpm_fusion; then
+        set -e
+        sudo rm -f "$NVIDIA_FALLBACK_TRIED_FILE"
+        return 0
+    fi
+
+    if try_fallback_nvidia_run; then
+        set -e
+        sudo rm -f "$NVIDIA_FALLBACK_TRIED_FILE"
+        return 0
+    fi
+
+    set -e
+    # TODOS los metodos fallaron. Marcar para evitar loops futuros.
+    sudo mkdir -p "$(dirname "$NVIDIA_FALLBACK_TRIED_FILE")"
+    sudo touch "$NVIDIA_FALLBACK_TRIED_FILE"
+    return 1
+}
 setup_ubuntu_nvidia_repo() {
-    echo "📦 Configurando repositorio NVIDIA para Ubuntu..."
-    
     # Asegurar que wget esté instalado
     sudo apt-get update -y
     sudo apt-get install -y wget
@@ -614,7 +728,7 @@ install_nvidia_dependencies() {
                 echo "   Salida: $install_output"
                 echo "   Intentando paquete directo..."
                 
-                install_output=$(sudo dnf install -y nvidia-driver 2>&1)
+                install_output=$(sudo dnf install -y nvidia-driver nvidia-driver-cuda 2>&1)
                 install_rc=$?
                 echo "$install_output" | sudo tee -a "$INSTALL_LOG"
                 
@@ -631,13 +745,56 @@ install_nvidia_dependencies() {
                     
                     if [ $install_rc -ne 0 ]; then
                         echo "❌ No se pudo instalar el driver NVIDIA después de varios intentos"
-                        echo "   Reiniciando para intentar nuevamente..."
+                        echo "   Probando fallbacks (RPM Fusion + NVIDIA .run)..."
                         set -e  # Reactivar
-                        ask_reboot "driver_install_failed"
+                        try_fallback_nvidia_install || exit 3
                     fi
                 fi
             fi
-            
+
+            # En el repo CUDA (driver >= 5xx) nvidia-smi viene en nvidia-driver-cuda,
+            # separado de nvidia-driver. Instalarlo si aún falta antes de validar.
+            if ! command -v nvidia-smi &> /dev/null; then
+                echo "   nvidia-smi ausente. Ejecutando: dnf install nvidia-driver-cuda"
+                sudo dnf install -y nvidia-driver-cuda 2>&1 | sudo tee -a "$INSTALL_LOG"
+            fi
+
+            # ═══════════════════════════════════════════════════════════════════════
+            # VALIDACIÓN CRÍTICA: aunque dnf haya retornado 0, verificar
+            # que nvidia-smi REALMENTE quedó instalado. Si no, ejecutar
+            # fallbacks en vez de entrar en loop de reboots.
+            # (Esto resuelve el bug donde nvidia-driver es solo metapaquete)
+            # ═══════════════════════════════════════════════════════════════════════
+            if ! command -v nvidia-smi &> /dev/null; then
+                echo ""
+                echo "⚠️  dnf install nvidia-driver retornó ${install_rc:-0} pero nvidia-smi NO está disponible."
+                echo "    (Causa probable: sistema sin suscripción RHEL → solo se instaló el metapaquete)"
+                echo "    Ejecutando fallbacks (RPM Fusion / NVIDIA .run)..."
+                echo ""
+
+                if try_fallback_nvidia_install; then
+                    echo "✅ Fallback de NVIDIA exitoso. Continuando..."
+                else
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════════════╕"
+                    echo "║  ❌ NO SE PUDO INSTALAR NVIDIA                                  ║"
+                    echo "║                                                             ║"
+                    echo "║  Ya se intentó:                                             ║"
+                    echo "║   1. dnf module install nvidia-driver:latest              ║"
+                    echo "║   2. dnf install nvidia-driver nvidia-driver-cuda         ║"
+                    echo "║   3. RPM Fusion + akmod-nvidia                              ║"
+                    echo "║   4. NVIDIA .run installer oficial                          ║"
+                    echo "║                                                             ║"
+                    echo "║  Para reintentar:                                           ║"
+                    echo "║    sudo rm -f /opt/subs-gp/nvidia_fallback_tried            ║"
+                    echo "║  Revisar: /var/log/nvidia-install.log                       ║"
+                    echo "║                                                             ║"
+                    echo "║  ⚠️  ABORTANDO SIN REBOOT para evitar loop infinito.       ║"
+                    echo "╝════════════════════════════════════════════════════════════════════╕"
+                    exit 3
+                fi
+            fi
+
             echo "$(date): Instalación de nvidia-driver completada" | sudo tee -a "$INSTALL_LOG"
 
             # Instalar kernel-devel con multi-fallback y compilar módulo DKMS
@@ -703,9 +860,33 @@ install_nvidia_dependencies() {
 
     # Verificar si el driver funciona después de todos los intentos
     if ! nvidia-smi &> /dev/null; then
-        echo "❌ El driver NVIDIA está instalado pero no comunica con el kernel."
-        echo "   Solicitando reboot automático..."
-        ask_reboot "driver_installed"
+        # FIX LOOP: antes de reiniciar, intentar fallbacks una vez más.
+        # Si también fallan, abortar SIN pedir reboot.
+        echo "⚠️  Driver NVIDIA (paquetes) instalado pero nvidia-smi no responde."
+
+        if try_fallback_nvidia_install && nvidia-smi &> /dev/null; then
+            echo "✅ Fallback exitoso. Driver NVIDIA funcional."
+            reset_reboot_count
+            sudo systemctl enable nvidia-persistenced &> /dev/null || true
+        else
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════════════╕"
+            echo "║  ❌ nvidia-smi NO RESPONDE - Abortando sin reboot           ║"
+            echo "║                                                             ║"
+            echo "║  Ya se intentó:                                             ║"
+            echo "║   1. dnf install nvidia-driver                             ║"
+            echo "║   2. Módulo kmod precompilado                              ║"
+            echo "║   3. DKMS build + kernel-devel                            ║"
+            echo "║   4. RPM Fusion + akmod-nvidia                             ║"
+            echo "║   5. Driver .run oficial de NVIDIA.com                      ║"
+            echo "║                                                             ║"
+            echo "║  Para reintentar:                                           ║"
+            echo "║    sudo rm -f /opt/subs-gp/nvidia_fallback_tried            ║"
+            echo "║                                                             ║"
+            echo "║  ⚠️  Saliendo SIN reiniciar (evita reboot loop).           ║"
+            echo "╝════════════════════════════════════════════════════════════════════╕"
+            exit 4
+        fi
     else
         echo "✅ Driver NVIDIA ya está instalado y funcionando"
         nvidia-smi --query-gpu=name,driver_version --format=csv,noheader

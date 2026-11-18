@@ -9,49 +9,41 @@ from dishka import Provider, provide, Scope
 
 from .secret_manager_interface import ISecretManager
 from .secret_manager_local_service import SecretManagerLocalService
-from .secret_manager_layer_service import SecretManagerLayerService
 
 
 class SecretsManagerProvider(Provider):
     """
     Dishka provider for AWS Secrets Manager services.
-    
-    Automatically detects the environment and provides the appropriate
-    ISecretManager implementation:
-    - Lambda environment: SecretManagerLayerService (HTTP extension)
-    - Other environments: SecretManagerLocalService (boto3)
+
+    Provides SecretManagerLocalService (boto3, host IAM role) when
+    AWS_USE_SECRETS_MANAGER=true, otherwise a no-op implementation.
     """
-    
+
     @provide(scope=Scope.APP)
     def provide_secret_manager(self) -> ISecretManager:
         """
         Provide the appropriate ISecretManager implementation.
-        
+
         Returns:
-            ISecretManager: Lambda layer service if in Lambda, otherwise boto3 service.
+            ISecretManager: boto3 service, or a no-op when Secrets Manager is disabled.
         """
         return self.get_secret_manager()
-    
+
     def get_secret_manager(self) -> ISecretManager:
         """
         Get the appropriate ISecretManager implementation.
         Non-Dishka helper method for direct usage.
-        
+
         Returns:
-            ISecretManager: Lambda layer service if in Lambda, otherwise boto3 service.
+            ISecretManager: boto3 service, or a no-op when Secrets Manager is disabled.
         """
         # Check if AWS Secrets Manager is enabled
         use_secrets_manager = os.getenv("AWS_USE_SECRETS_MANAGER", "false").lower()
-        
+
         if use_secrets_manager != "true":
             # Return a no-op implementation or None-safe wrapper
             return _NoOpSecretManager()
-        
-        # Detect Lambda environment
-        if os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
-            return SecretManagerLayerService()
-        
-        # Default to boto3 for local/EC2/ECS
+
         region = os.getenv("AWS_REGION", "us-east-1")
         return SecretManagerLocalService(region=region)
 
@@ -73,4 +65,3 @@ class _NoOpSecretManager(ISecretManager):
 
 # Convenience export
 DISHKA_SECRETS_MANAGER_PROVIDER = SecretsManagerProvider()
-

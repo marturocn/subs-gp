@@ -12,14 +12,27 @@ from src.infraestructure.framework.providers.aws.secrets_manager import ISecretM
 from src.infraestructure.db.config.configuration import get_env_credentials
 
 
+class DbConfigurationError(RuntimeError):
+    """Required database configuration is missing. Aborts application startup."""
+
+
+def _require_env(name: str) -> str:
+    """Return a non-empty env value or raise DbConfigurationError naming it."""
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise DbConfigurationError(
+            f"{name} is required when AWS_USE_SECRETS_MANAGER=true"
+        )
+    return value
+
+
 class RdsCredentials:
     """RDS credentials structure from Secrets Manager."""
-    
+
     def __init__(self, data: Dict[str, Any]):
         self.engine: str = data.get("engine", "mysql")
         self.host: str = data.get("host", "")
         self.port: int = int(data.get("port", 3306))
-        self.dbname: str = data.get("dbname", "")
         self.username: str = data.get("username", "")
         self.password: str = data.get("password", "")
 
@@ -67,12 +80,10 @@ class DbGetConfigService:
     @property
     def secret_key(self) -> str:
         """
-        Get the secret key name for database credentials.
-        Format: SUBS_GP_DB_CREDENTIALS_${PY_ENV}
+        Get the secret id (name or ARN) for database credentials.
+        Taken verbatim from AWS_DB_CREDENTIALS_SECRET_ID.
         """
-        py_env = os.getenv("PY_ENV", "")
-        prefix = os.getenv("AWS_DB_CREDENTIALS_SECRET_PREFIX", "")
-        return f"{prefix}_{py_env}"
+        return _require_env("AWS_DB_CREDENTIALS_SECRET_ID")
     
     def get_credentials(self) -> Observable[DbCredentials]:
         """
@@ -99,17 +110,20 @@ class DbGetConfigService:
                 password=local.get("pass", "root"),
             ))
         
-        # Use AWS Secrets Manager
-        logger.info(f"Attempting to fetch credentials from Secrets Manager with key: {self.secret_key}")
-        return self.sm.get_secret(self.secret_key).pipe(
-            ops.do_action(on_error=lambda e: logger.error(f"Error fetching secret '{self.secret_key}' from Secrets Manager: {e}")),
+        # Use AWS Secrets Manager. Config is validated before the pipeline is
+        # built so DbConfigurationError reaches the caller unwrapped.
+        secret_id = self.secret_key
+        database = _require_env("DB_NAME")
+        logger.info(f"Attempting to fetch credentials from Secrets Manager with key: {secret_id}")
+        return self.sm.get_secret(secret_id).pipe(
+            ops.do_action(on_error=lambda e: logger.error(f"Error fetching secret '{secret_id}' from Secrets Manager: {e}")),
             ops.map(lambda secret: json.loads(secret)),
             ops.map(lambda data: RdsCredentials(data)),
             ops.map(lambda cred: DbCredentials(
                 db_type=cred.engine,
                 host=cred.host,
                 port=cred.port,
-                database=cred.dbname,
+                database=database,
                 username=cred.username,
                 password=cred.password,
             )),

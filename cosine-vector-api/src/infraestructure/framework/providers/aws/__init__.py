@@ -6,7 +6,6 @@ Provides AWS service integrations.
 from .secrets_manager import (
     ISecretManager,
     SecretManagerLocalService,
-    SecretManagerLayerService,
     SecretsManagerProvider,
     DISHKA_SECRETS_MANAGER_PROVIDER,
 )
@@ -21,7 +20,6 @@ AWS_PROVIDERS = [
 __all__ = [
     "ISecretManager",
     "SecretManagerLocalService", 
-    "SecretManagerLayerService",
     "SecretsManagerProvider",
     "DISHKA_SECRETS_MANAGER_PROVIDER",
     "AWS_PROVIDERS",

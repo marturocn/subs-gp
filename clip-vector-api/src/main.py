@@ -26,6 +26,7 @@ from src.api.api_module import create_api_v1_router, create_router
 from src.infraestructure.framework.config.config_root_module import get_app_config
 from src.infraestructure.framework.middleware.exception_middleware import GlobalExceptionMiddleware
 from src.infraestructure.framework.middleware.route_middleware_applicator import RouteMiddlewareApplicator
+from src.infraestructure.db.config.db_get_config_service import DbConfigurationError
 
 # Importar providers de Dishka
 from src.application.application_module import APPLICATION_PROVIDERS
@@ -59,6 +60,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         logger.info("✅ Database connection successful.")
+    except DbConfigurationError as e:
+        # Missing configuration is not recoverable: abort startup
+        logger.error(f"❌ Database configuration error: {e}")
+        raise
     except Exception as e:
         logger.error(f"❌ Database connection error: {e}")
     # - Cache initialization

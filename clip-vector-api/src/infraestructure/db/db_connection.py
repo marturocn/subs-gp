@@ -1,5 +1,6 @@
 # infrastructure/db/database.py
 from sqlalchemy import create_engine, Engine
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from functools import lru_cache
@@ -48,7 +49,15 @@ class DatabaseManager:
     def engine(self) -> Engine:
         if self._engine is None:
             creds = self._get_credentials()
-            database_url = f"mysql+pymysql://{creds.username}:{creds.password}@{creds.host}:{creds.port}/{creds.database}"
+            # URL.create escapes special characters in the password
+            database_url = URL.create(
+                "mysql+pymysql",
+                username=creds.username,
+                password=creds.password,
+                host=creds.host,
+                port=int(creds.port),
+                database=creds.database,
+            )
             self._engine = create_engine(
                 database_url,
                 echo=False,

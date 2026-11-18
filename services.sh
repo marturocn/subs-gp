@@ -75,6 +75,32 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# Muestra el estado de un servicio y distingue "arrancando" de "fallando".
+# El primer arranque de clip-vector-subs-gp instala drivers/CUDA (hasta 30 min) en estado
+# activating; eso no es un fallo.
+print_service_health() {
+    local service_name="$1"
+    systemctl status "${service_name}.service" --no-pager 2>/dev/null || true
+
+    local state
+    state=$(systemctl is-active "${service_name}.service" 2>/dev/null || true)
+    case "$state" in
+        active)
+            ;;
+        activating|reloading)
+            echo ""
+            log_info "⏳ ${service_name} está arrancando. El primer arranque instala dependencias y puede tardar hasta 30 min."
+            log_info "   Sigue el avance con: sudo journalctl -u ${service_name} -f"
+            ;;
+        *)
+            echo ""
+            log_warning "El servicio está fallando (estado: ${state:-desconocido}). Mostrando últimas líneas del log:"
+            echo ""
+            journalctl -u "${service_name}.service" -n 20 --no-pager 2>/dev/null || true
+            ;;
+    esac
+}
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         log_error "Este script debe ejecutarse con sudo"
@@ -295,9 +321,11 @@ start_services() {
     
     for service_name in "${!SERVICES[@]}"; do
         log_info "Iniciando ${service_name}..."
-        systemctl start "${service_name}.service"
+        # enable primero y start sin bloquear: el primer arranque de clip-vector-subs-gp instala
+        # drivers/CUDA (puede tardar 30 min o cortar D-Bus) y no debe frenar al resto
         systemctl enable "${service_name}.service"
-        log_success "${service_name} iniciado y habilitado"
+        systemctl start --no-block "${service_name}.service"
+        log_success "${service_name} habilitado y arrancando (ver: ./services.sh logs)"
     done
     
     log_success "Todos los servicios iniciados"
@@ -354,12 +382,7 @@ status_services() {
             echo "  💡 Para instalar, ejecute:"
             echo "     sudo ./services.sh install"
         else
-            if ! systemctl status "${service_name}.service" --no-pager 2>/dev/null; then
-                echo ""
-                log_warning "El servicio está fallando. Mostrando últimas líneas del log:"
-                echo ""
-                journalctl -u "${service_name}.service" -n 20 --no-pager 2>/dev/null || true
-            fi
+            print_service_health "${service_name}"
             
             # Si se especificaron líneas adicionales, mostrar logs
             if [ "$lines" -gt 0 ]; then
@@ -458,12 +481,7 @@ show_service_status() {
         echo "  💡 Para instalar, ejecute:"
         echo "     sudo ./services.sh install"
     else
-        if ! systemctl status "${service_name}.service" --no-pager 2>/dev/null; then
-            echo ""
-            log_warning "El servicio está fallando. Mostrando últimas líneas del log:"
-            echo ""
-            journalctl -u "${service_name}.service" -n 20 --no-pager 2>/dev/null || true
-        fi
+        print_service_health "${service_name}"
         
         # Si se especificaron líneas adicionales
         if [ "$lines" -gt 0 ]; then
